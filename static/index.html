@@ -1,0 +1,993 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Face Search Engine</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;900&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surfaceB: #1e2530;
+      --border: #30363d;
+      --primary: #58a6ff;
+      --secondary: #3fb950;
+      --danger: #f85149;
+      --warn: #d29922;
+      --text: #e6edf3;
+      --textMuted: #8b949e;
+      --radius: 14px;
+      --shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+    }
+
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Cairo', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ── Animated background ── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 80% 50% at 20% 10%, rgba(88, 166, 255, .08) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 40% at 80% 90%, rgba(63, 185, 80, .06) 0%, transparent 60%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── Layout ── */
+    .app {
+      position: relative;
+      z-index: 1;
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0 40px 60px;
+    }
+
+    /* ── Header ── */
+    header {
+      text-align: center;
+      padding: 48px 0 36px;
+    }
+
+    .logo {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .logo-icon {
+      width: 52px;
+      height: 52px;
+      background: linear-gradient(135deg, var(--primary), #a371f7);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 26px;
+      box-shadow: 0 0 24px rgba(88, 166, 255, .4);
+    }
+
+    header h1 {
+      font-size: clamp(1.6rem, 4vw, 2.2rem);
+      font-weight: 900;
+      background: linear-gradient(90deg, var(--primary) 0%, #a371f7 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    header p {
+      color: var(--textMuted);
+      font-size: .95rem;
+      margin-top: 8px;
+    }
+
+    /* ── Stats Bar ── */
+    #statsBar {
+      display: flex;
+      gap: 14px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 32px;
+    }
+
+    .stat-chip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 99px;
+      padding: 6px 18px;
+      font-size: .85rem;
+      color: var(--textMuted);
+    }
+
+    .stat-chip span {
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    /* ── Tabs ── */
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 28px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 6px;
+    }
+
+    .tab-btn {
+      flex: 1;
+      padding: 11px 0;
+      font-family: inherit;
+      font-size: .95rem;
+      font-weight: 600;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all .2s;
+      background: transparent;
+      color: var(--textMuted);
+    }
+
+    .tab-btn.active {
+      background: linear-gradient(135deg, var(--primary), #a371f7);
+      color: #fff;
+      box-shadow: var(--shadow);
+    }
+
+    /* ── Panels ── */
+    .panel {
+      display: none;
+    }
+
+    .panel.active {
+      display: block;
+    }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px;
+      box-shadow: var(--shadow);
+    }
+
+    .card+.card {
+      margin-top: 20px;
+    }
+
+    .card h2 {
+      font-size: 1.15rem;
+      margin-bottom: 20px;
+      color: var(--text);
+    }
+
+    /* ── Drop Zone ── */
+    .drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 36px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: all .2s;
+      position: relative;
+    }
+
+    .drop-zone:hover,
+    .drop-zone.dragover {
+      border-color: var(--primary);
+      background: rgba(88, 166, 255, .05);
+    }
+
+    .drop-zone .drop-icon {
+      font-size: 2.8rem;
+      margin-bottom: 10px;
+    }
+
+    .drop-zone p {
+      color: var(--textMuted);
+      font-size: .9rem;
+    }
+
+    .drop-zone input[type=file] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    /* Preview */
+    .preview-wrap {
+      margin-top: 16px;
+      display: none;
+      justify-content: center;
+    }
+
+    .preview-wrap.show {
+      display: flex;
+    }
+
+    .preview-wrap img {
+      max-height: 200px;
+      max-width: 100%;
+      border-radius: 10px;
+      border: 2px solid var(--border);
+      object-fit: cover;
+    }
+
+    /* ── Form Controls ── */
+    .field {
+      margin-top: 18px;
+    }
+
+    .field label {
+      display: block;
+      font-size: .85rem;
+      color: var(--textMuted);
+      margin-bottom: 7px;
+    }
+
+    .field input {
+      width: 100%;
+      padding: 11px 15px;
+      background: var(--surfaceB);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: .95rem;
+      outline: none;
+      transition: border-color .2s;
+    }
+
+    .field input:focus {
+      border-color: var(--primary);
+    }
+
+    /* ── Buttons ── */
+    .btn {
+      margin-top: 20px;
+      width: 100%;
+      padding: 13px;
+      border: none;
+      border-radius: 10px;
+      font-family: inherit;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all .2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--primary), #a371f7);
+      color: #fff;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      filter: brightness(1.15);
+      transform: translateY(-1px);
+    }
+
+    .btn-primary:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+
+    .btn-danger {
+      background: rgba(248, 81, 73, .15);
+      color: var(--danger);
+      border: 1px solid var(--danger);
+    }
+
+    .btn-danger:hover {
+      background: rgba(248, 81, 73, .25);
+    }
+
+    /* ── Spinner ── */
+    .spinner {
+      width: 20px;
+      height: 20px;
+      border: 3px solid rgba(255, 255, 255, .3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .6s linear infinite;
+      display: none;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    /* ── Results ── */
+    #searchResults,
+    #indexResult {
+      margin-top: 24px;
+    }
+
+    #searchResults {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 16px;
+    }
+
+    .result-card {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      background: var(--surfaceB);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 18px;
+      transition: transform .15s, border-color .15s;
+    }
+
+    .result-card:hover {
+      transform: translateY(-2px);
+      border-color: var(--primary);
+    }
+
+    .result-card img {
+      width: 200px;
+      height: 200px;
+      border-radius: 12px;
+      object-fit: cover;
+      border: 3px solid var(--surfaceB);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+      flex-shrink: 0;
+    }
+
+    .result-info {
+      flex: 1;
+    }
+
+    .result-name {
+      font-weight: 700;
+      font-size: 1rem;
+    }
+
+    .result-meta {
+      font-size: .8rem;
+      color: var(--textMuted);
+      margin-top: 3px;
+    }
+
+    .similarity-bar-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .similarity-bar {
+      flex: 1;
+      height: 6px;
+      background: var(--border);
+      border-radius: 99px;
+      overflow: hidden;
+    }
+
+    .similarity-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--secondary), var(--primary));
+      border-radius: 99px;
+      transition: width .6s ease;
+    }
+
+    .similarity-pct {
+      font-size: .85rem;
+      font-weight: 700;
+      color: var(--primary);
+      min-width: 46px;
+    }
+
+    /* Top match badge */
+    .badge-top {
+      font-size: .7rem;
+      background: rgba(63, 185, 80, .15);
+      color: var(--secondary);
+      border: 1px solid var(--secondary);
+      border-radius: 99px;
+      padding: 2px 9px;
+      margin-right: 8px;
+    }
+
+    /* ── Alert ── */
+    .alert {
+      padding: 13px 18px;
+      border-radius: 10px;
+      font-size: .9rem;
+      margin-top: 14px;
+    }
+
+    .alert-success {
+      background: rgba(63, 185, 80, .1);
+      border: 1px solid var(--secondary);
+      color: var(--secondary);
+    }
+
+    .alert-error {
+      background: rgba(248, 81, 73, .1);
+      border: 1px solid var(--danger);
+      color: var(--danger);
+    }
+
+    .alert-info {
+      background: rgba(88, 166, 255, .1);
+      border: 1px solid var(--primary);
+      color: var(--primary);
+    }
+
+    /* ── Persons Grid ── */
+    #personsGrid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 24px;
+      margin-top: 24px;
+    }
+
+    .person-tile {
+      background: var(--surfaceB);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      text-align: center;
+      position: relative;
+      transition: transform .2s, box-shadow .2s;
+    }
+
+    .person-tile:hover {
+      transform: translateY(-4px);
+      box-shadow: var(--shadow);
+      border-color: var(--primary);
+    }
+
+    .person-tile img {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      border-radius: 12px;
+      object-fit: cover;
+      border: 3px solid var(--surfaceB);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+      margin-bottom: 12px;
+    }
+
+    .person-tile .p-name {
+      font-weight: 700;
+      font-size: .9rem;
+    }
+
+    .person-tile .p-id {
+      font-size: .75rem;
+      color: var(--textMuted);
+      margin-top: 2px;
+    }
+
+    .person-tile .p-date {
+      font-size: .72rem;
+      color: var(--textMuted);
+    }
+
+    .del-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 26px;
+      height: 26px;
+      background: rgba(248, 81, 73, .15);
+      color: var(--danger);
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: .85rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background .2s;
+    }
+
+    .del-btn:hover {
+      background: rgba(248, 81, 73, .3);
+    }
+
+    .empty-state {
+      grid-column: 1/-1;
+      text-align: center;
+      color: var(--textMuted);
+      padding: 40px 0;
+      font-size: .95rem;
+    }
+
+    /* ── Pagination Bar ── */
+    .pagination-bar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      margin-top: 28px;
+      flex-wrap: wrap;
+    }
+    .pagination-bar .page-info {
+      color: var(--textMuted);
+      font-size: .85rem;
+      text-align: center;
+      min-width: 180px;
+    }
+    .pagination-bar .btn-page {
+      padding: 8px 20px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surfaceB);
+      color: var(--text);
+      font-family: inherit;
+      font-size: .9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .2s;
+    }
+    .pagination-bar .btn-page:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+    .pagination-bar .btn-page:disabled { opacity: .35; cursor: not-allowed; }
+    .btn-sort {
+      margin: 0;
+      width: auto;
+      padding: 9px 20px;
+      border: 1px solid var(--primary);
+      border-radius: 10px;
+      background: rgba(88, 166, 255, .1);
+      color: var(--primary);
+      font-family: inherit;
+      font-size: .9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .2s;
+      white-space: nowrap;
+    }
+    .btn-sort:hover { background: rgba(88, 166, 255, .2); }
+
+    /* ── Footer ── */
+    footer {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 0 0;
+      color: var(--textMuted);
+      font-size: 1.15rem;
+      font-weight: 600;
+    }
+
+    footer a {
+      color: var(--textMuted);
+      transition: color .2s;
+      display: inline-flex;
+      align-items: center;
+      margin-left: 8px;
+    }
+
+    footer a:hover {
+      color: var(--text);
+      transform: scale(1.05);
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 800px) {
+      #searchResults {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 600px) {
+      .app {
+        padding: 0 16px 40px;
+      }
+
+      .card {
+        padding: 18px;
+      }
+
+      header {
+        padding: 30px 0 24px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="app">
+
+    <!-- Header -->
+    <header>
+      <div class="logo">
+        <div class="logo-icon">🔍</div>
+        <h1>Face Search Engine</h1>
+      </div>
+      <p>High-accuracy face indexing and search using InsightFace + FAISS</p>
+    </header>
+
+    <!-- Stats Bar -->
+    <div id="statsBar">
+      <div class="stat-chip">Indexed: <span id="statTotal">—</span></div>
+      <div class="stat-chip">Server Status: <span id="statStatus">Checking…</span></div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab-btn active" onclick="switchTab('index')">➕ Index Face</button>
+      <button class="tab-btn" onclick="switchTab('search')">🔍 Search</button>
+      <button class="tab-btn" onclick="switchTab('persons')">👥 Indexed Faces</button>
+    </div>
+
+    <!-- ===== Panel: Index ===== -->
+    <div id="panelIndex" class="panel active">
+      <div class="card">
+        <h2>➕ Add a New Face to the Index</h2>
+
+        <!-- Drop zone -->
+        <div class="drop-zone" id="dzIndex">
+          <div class="drop-icon">🖼️</div>
+          <p>Drag an image here or click to select</p>
+          <p style="margin-top:5px;font-size:.8rem;">(JPEG, PNG — image must contain a clear face)</p>
+          <input type="file" id="fileIndex" accept="image/*" onchange="previewImage(this, 'previewIndex')" />
+        </div>
+        <div class="preview-wrap" id="previewIndexWrap">
+          <img id="previewIndex" src="" alt="Preview" />
+        </div>
+
+        <button class="btn btn-primary" id="btnIndex" onclick="indexFace()">
+          <div class="spinner" id="spinIndex"></div>
+          <span>📤 Index</span>
+        </button>
+
+        <div id="indexResult"></div>
+      </div>
+    </div>
+
+    <!-- ===== Panel: Search ===== -->
+    <div id="panelSearch" class="panel">
+      <div class="card">
+        <h2>🔍 Search for a Face by Photo</h2>
+
+        <div class="drop-zone" id="dzSearch">
+          <div class="drop-icon">📷</div>
+          <p>Drag the photo here or click to select</p>
+          <input type="file" id="fileSearch" accept="image/*" onchange="previewImage(this, 'previewSearch')" />
+        </div>
+        <div class="preview-wrap" id="previewSearchWrap">
+          <img id="previewSearch" src="" alt="Preview" />
+        </div>
+
+        <div class="field">
+          <label>Number of results (top_k)</label>
+          <input type="number" id="topK" value="9" min="1" max="50" />
+        </div>
+
+        <button class="btn btn-primary" id="btnSearch" onclick="searchFace()">
+          <div class="spinner" id="spinSearch"></div>
+          <span>🔎 Search</span>
+        </button>
+
+        <div id="searchResults"></div>
+      </div>
+    </div>
+
+    <!-- ===== Panel: Persons ===== -->
+    <div id="panelPersons" class="panel">
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+          <h2 style="margin:0;">👥 Indexed Faces</h2>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <button class="btn-sort" id="btnSort" onclick="toggleSort()">🕓 Newest First ↓</button>
+            <button class="btn btn-primary" style="margin:0;width:auto;padding:9px 20px;" onclick="loadPersons()">🔄 Refresh</button>
+          </div>
+        </div>
+        <div id="personsGrid"></div>
+        <div class="pagination-bar" id="paginationBar" style="display:none;">
+          <button class="btn-page" id="btnPrev" onclick="changePage(-1)">← Prev</button>
+          <span class="page-info" id="pageInfo">Page 1 of 1</span>
+          <button class="btn-page" id="btnNext" onclick="changePage(1)">Next →</button>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      by Amr
+      <a href="https://github.com/Amr-9" target="_blank" title="GitHub Profile">
+        <svg height="28" width="28" viewBox="0 0 16 16" fill="currentColor">
+          <path
+            d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z">
+          </path>
+        </svg>
+      </a>
+    </footer>
+  </div>
+
+  <script>
+    // Enable dynamic API path based on window location so it works on any host
+    const API = window.location.origin;
+
+    /* ──────────────── Tabs ──────────────── */
+    function switchTab(name) {
+      document.querySelectorAll('.tab-btn').forEach((b, i) => {
+        b.classList.toggle('active', ['index', 'search', 'persons'][i] === name);
+      });
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      document.getElementById('panel' + name.charAt(0).toUpperCase() + name.slice(1)).classList.add('active');
+      if (name === 'persons') loadPersons();
+    }
+
+    /* ──────────────── Image Preview ──────────────── */
+    function previewImage(input, previewId) {
+      const file = input.files[0];
+      if (!file) return;
+      const wrap = document.getElementById(previewId + 'Wrap');
+      const img = document.getElementById(previewId);
+      const reader = new FileReader();
+      reader.onload = e => {
+        img.src = e.target.result;
+        wrap.classList.add('show');
+      };
+      reader.readAsDataURL(file);
+    }
+
+    /* ── Drag & Drop ── */
+    function setupDrop(dzId, inputId, previewId) {
+      const dz = document.getElementById(dzId);
+      dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+      dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+      dz.addEventListener('drop', e => {
+        e.preventDefault(); dz.classList.remove('dragover');
+        const file = e.dataTransfer.files[0];
+        if (file && file.type.startsWith('image/')) {
+          const inp = document.getElementById(inputId);
+          const dt = new DataTransfer();
+          dt.items.add(file);
+          inp.files = dt.files;
+          previewImage(inp, previewId);
+        }
+      });
+    }
+    setupDrop('dzIndex', 'fileIndex', 'previewIndex');
+    setupDrop('dzSearch', 'fileSearch', 'previewSearch');
+
+    /* ──────────────── Stats ──────────────── */
+    async function loadStats() {
+      try {
+        const res = await fetch(`${API}/faces/stats`);
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        document.getElementById('statTotal').textContent = data.total_indexed;
+        document.getElementById('statStatus').textContent = '🟢 Online';
+      } catch {
+        document.getElementById('statStatus').textContent = '🔴 Disconnected';
+      }
+    }
+
+    /* ──────────────── Index ──────────────── */
+    async function indexFace() {
+      const file = document.getElementById('fileIndex').files[0];
+      const out = document.getElementById('indexResult');
+
+      if (!file) return showAlert(out, 'error', 'Please select an image first.');
+
+      setLoading('btnIndex', 'spinIndex', true);
+      out.innerHTML = '';
+
+      const fd = new FormData();
+      fd.append('image', file);
+
+      try {
+        const res = await fetch(`${API}/faces/index`, { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok) {
+          const detail = Array.isArray(data.detail)
+            ? data.detail.map(d => d.msg || JSON.stringify(d)).join(' | ')
+            : (data.detail || 'Unknown error');
+          throw new Error(detail);
+        }
+        showAlert(out, 'success',
+          `✅ Successfully indexed <strong>${data.faces_found}</strong> face(s)!<br>
+         Total indexed: <strong>${data.total_indexed}</strong>`
+        );
+        document.getElementById('fileIndex').value = '';
+        document.getElementById('previewIndexWrap').classList.remove('show');
+        loadStats();
+      } catch (e) {
+        showAlert(out, 'error', '❌ ' + e.message);
+      } finally {
+        setLoading('btnIndex', 'spinIndex', false);
+      }
+    }
+
+    /* ──────────────── Search ──────────────── */
+    async function searchFace() {
+      const file = document.getElementById('fileSearch').files[0];
+      const topK = document.getElementById('topK').value || 9;
+      const out = document.getElementById('searchResults');
+
+      if (!file) return showAlert(out, 'error', 'Please select an image to search.');
+
+      setLoading('btnSearch', 'spinSearch', true);
+      out.innerHTML = '';
+
+      const fd = new FormData();
+      fd.append('image', file);
+      fd.append('top_k', topK);
+
+      try {
+        const res = await fetch(`${API}/faces/search`, { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok) {
+          const detail = Array.isArray(data.detail)
+            ? data.detail.map(d => d.msg || JSON.stringify(d)).join(' | ')
+            : (data.detail || 'Unknown error');
+          throw new Error(detail);
+        }
+
+        if (!data.results || data.results.length === 0) {
+          showAlert(out, 'info', 'No match found in the index.');
+          return;
+        }
+
+        const header = document.createElement('p');
+        header.style.cssText = 'color:var(--textMuted);font-size:.85rem;margin-bottom:12px;grid-column:1/-1;';
+        header.textContent = `Face detection score: ${(data.query_det_score * 100).toFixed(1)}% | ${data.results.length} result(s)`;
+        out.appendChild(header);
+
+        data.results.forEach((r, i) => {
+          const pct = Math.round(r.similarity * 100);
+          const card = document.createElement('div');
+          card.className = 'result-card';
+          card.innerHTML = `
+          <img src="${API}${r.image_path}" alt="${escHtml(r.name)}" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22200%22><rect fill=%22%231e2530%22 width=%22200%22 height=%22200%22 rx=%2212%22/><text x=%2250%25%22 y=%2255%25%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22 font-size=%2260%22>👤</text></svg>'" />
+          <div class="result-info">
+            ${i === 0 ? '<div style="margin-bottom:4px;"><span class="badge-top">Best Match</span></div>' : ''}
+            <div class="result-name" style="font-size: 1.15rem; margin-bottom: 2px;">
+              Face #${r.person_id}
+            </div>
+            <div class="result-meta" style="font-size: 0.9rem;">${new Date(r.created_at).toLocaleDateString('en-US')}</div>
+            <div class="similarity-bar-wrap" style="margin-top:8px;">
+              <div class="similarity-bar">
+                <div class="similarity-fill" style="width:${pct}%"></div>
+              </div>
+              <div class="similarity-pct">${pct}%</div>
+            </div>
+          </div>
+        `;
+          out.appendChild(card);
+        });
+
+      } catch (e) {
+        showAlert(out, 'error', '❌ ' + e.message);
+      } finally {
+        setLoading('btnSearch', 'spinSearch', false);
+      }
+    }
+
+    /* ──────────────── Persons ──────────────── */
+    const PAGE_SIZE  = 200;
+    let currentPage  = 1;
+    let sortOrder    = 'desc';  // 'desc' = newest first
+    let totalPersons = 0;
+
+    function toggleSort() {
+      sortOrder = (sortOrder === 'desc') ? 'asc' : 'desc';
+      document.getElementById('btnSort').textContent =
+        sortOrder === 'desc' ? '🕓 Newest First ↓' : '🕐 Oldest First ↑';
+      currentPage = 1;
+      loadPersons();
+    }
+
+    function changePage(delta) {
+      const totalPages = Math.max(1, Math.ceil(totalPersons / PAGE_SIZE));
+      const newPage = currentPage + delta;
+      if (newPage < 1 || newPage > totalPages) return;
+      currentPage = newPage;
+      loadPersons();
+    }
+
+    async function loadPersons() {
+      const grid = document.getElementById('personsGrid');
+      const bar  = document.getElementById('paginationBar');
+      grid.innerHTML = '<div class="empty-state">⏳ Loading…</div>';
+      bar.style.display = 'none';
+
+      const skip = (currentPage - 1) * PAGE_SIZE;
+      try {
+        const res  = await fetch(`${API}/faces?skip=${skip}&limit=${PAGE_SIZE}&order=${sortOrder}`);
+        const data = await res.json();
+        totalPersons = data.total;
+        const totalPages = Math.max(1, Math.ceil(totalPersons / PAGE_SIZE));
+
+        grid.innerHTML = '';
+        if (!data.persons || data.persons.length === 0) {
+          grid.innerHTML = '<div class="empty-state">📭 No indexed faces yet.</div>';
+          return;
+        }
+        data.persons.forEach(p => {
+          const tile = document.createElement('div');
+          tile.className = 'person-tile';
+          const date = new Date(p.created_at).toLocaleDateString('en-US');
+          tile.innerHTML = `
+          <button class="del-btn" title="Delete" onclick="deletePerson(${p.id}, this)">✕</button>
+          <img src="${API}${p.image_path}" alt="${escHtml(p.name)}" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22160%22 height=%22160%22><rect fill=%22%231e2530%22 width=%22160%22 height=%22160%22 rx=%2212%22/><text x=%2250%25%22 y=%2255%25%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22 font-size=%2260%22>👤</text></svg>'" />
+          <div class="p-name" style="font-size: 1.05rem; margin-bottom: 4px;">Face #${p.id}</div>
+          <div class="p-date">${date}</div>
+        `;
+          grid.appendChild(tile);
+        });
+
+        if (totalPersons > PAGE_SIZE) {
+          document.getElementById('pageInfo').textContent =
+            `Page ${currentPage} of ${totalPages} (${totalPersons} total)`;
+          document.getElementById('btnPrev').disabled = (currentPage === 1);
+          document.getElementById('btnNext').disabled = (currentPage === totalPages);
+          bar.style.display = 'flex';
+        }
+      } catch {
+        grid.innerHTML = '<div class="empty-state">❌ Failed to connect to server.</div>';
+      }
+    }
+
+    async function deletePerson(id, btn) {
+      if (!confirm(`Are you sure you want to delete face #${id}?`)) return;
+      btn.disabled = true;
+      try {
+        const res = await fetch(`${API}/faces/${id}`, { method: 'DELETE' });
+        if (!res.ok) { const d = await res.json(); throw new Error(d.detail); }
+        btn.closest('.person-tile').remove();
+        loadStats();
+      } catch (e) {
+        alert('Error: ' + e.message);
+        btn.disabled = false;
+      }
+    }
+
+    /* ──────────────── Helpers ──────────────── */
+    function showAlert(container, type, html) {
+      const div = document.createElement('div');
+      div.className = `alert alert-${type}`;
+      div.innerHTML = html;
+      container.appendChild(div);
+    }
+
+    function setLoading(btnId, spinId, loading) {
+      document.getElementById(btnId).disabled = loading;
+      document.getElementById(spinId).style.display = loading ? 'block' : 'none';
+    }
+
+    function escHtml(str) {
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    /* ──────────────── Init ──────────────── */
+    loadStats();
+    setInterval(loadStats, 15000);
+  </script>
+</body>
+
+</html>
