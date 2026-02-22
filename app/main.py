@@ -32,13 +32,18 @@ if os.path.isdir(_nvidia_dir):
             os.add_dll_directory(_bin)
             os.environ["PATH"] = _bin + os.pathsep + os.environ.get("PATH", "")
 
+import io
+import shutil
+import tempfile
 import uuid
+import zipfile
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Any, List
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import database
@@ -106,8 +111,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve index.html directly from root
 app.mount("/storage", StaticFiles(directory=STORAGE_DIR), name="storage")
+app.mount("/static",  StaticFiles(directory="static"),   name="static")
 
 
 # ============================================================
@@ -305,6 +310,149 @@ async def get_stats() -> dict[str, Any]:
         "storage_dir":   os.path.abspath(STORAGE_DIR),
         "index_path":    os.path.abspath(vector_store.INDEX_PATH),
     }
+
+
+# ============================================================
+#  GET /backup/download — Download full backup as ZIP
+# ============================================================
+
+@app.get("/backup/download", summary="Download full backup as ZIP")
+async def backup_download():
+    """
+    Creates a ZIP containing:
+      - faces.db    (SQLite database)
+      - faces.index (FAISS vector index)
+      - storage/    (all face crop images)
+    WAL checkpoint is performed first to ensure DB consistency.
+    """
+    # Flush WAL so faces.db contains all committed data
+    try:
+        with database.get_connection() as conn:
+            conn.execute("PRAGMA wal_checkpoint(FULL)")
+    except Exception:
+        pass
+
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        if os.path.exists(database.DB_PATH):
+            zf.write(database.DB_PATH, "faces.db")
+        if os.path.exists(vector_store.INDEX_PATH):
+            zf.write(vector_store.INDEX_PATH, "faces.index")
+        if os.path.isdir(STORAGE_DIR):
+            for fname in os.listdir(STORAGE_DIR):
+                fpath = os.path.join(STORAGE_DIR, fname)
+                if os.path.isfile(fpath):
+                    zf.write(fpath, f"storage/{fname}")
+    buf.seek(0)
+
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename=face-search-backup-{timestamp}.zip"},
+    )
+
+
+# ============================================================
+#  POST /backup/restore — Restore from a backup ZIP
+# ============================================================
+
+@app.post("/backup/restore", summary="Restore from a backup ZIP")
+async def backup_restore(
+    backup_file: UploadFile = File(...),
+    mode: str = Form(default="replace", description="'replace' clears existing data; 'merge' adds backup on top"),
+) -> dict[str, Any]:
+    """
+    Accepts a ZIP produced by /backup/download.
+
+    mode=replace  — Deletes all current data then restores from backup (default).
+    mode=merge    — Keeps current data and appends backup persons on top.
+                    Duplicate faces may appear if the same person is in both datasets.
+    """
+    if mode not in ("replace", "merge"):
+        raise HTTPException(status_code=422, detail="mode must be 'replace' or 'merge'.")
+
+    data = await backup_file.read()
+    if not data:
+        raise HTTPException(status_code=422, detail="Empty file.")
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            names = zf.namelist()
+            if "faces.db" not in names:
+                raise HTTPException(status_code=400, detail="Invalid backup: faces.db missing.")
+            if "faces.index" not in names:
+                raise HTTPException(status_code=400, detail="Invalid backup: faces.index missing.")
+
+            with tempfile.TemporaryDirectory() as tmp:
+                zf.extractall(tmp)
+
+                if mode == "replace":
+                    # ── Replace mode: wipe everything, restore from backup ──
+                    shutil.copy2(os.path.join(tmp, "faces.db"),    database.DB_PATH)
+                    shutil.copy2(os.path.join(tmp, "faces.index"), vector_store.INDEX_PATH)
+                    storage_src = os.path.join(tmp, "storage")
+                    if os.path.isdir(storage_src):
+                        for f in os.listdir(STORAGE_DIR):
+                            fp = os.path.join(STORAGE_DIR, f)
+                            if os.path.isfile(fp):
+                                os.remove(fp)
+                        for f in os.listdir(storage_src):
+                            shutil.copy2(
+                                os.path.join(storage_src, f),
+                                os.path.join(STORAGE_DIR, f),
+                            )
+                    vector_store.reload_index()
+
+                else:
+                    # ── Merge mode: keep existing data, add backup on top ──
+                    import sqlite3
+
+                    # Read all persons from backup DB
+                    backup_conn = sqlite3.connect(os.path.join(tmp, "faces.db"))
+                    backup_conn.row_factory = sqlite3.Row
+                    backup_persons = backup_conn.execute(
+                        "SELECT id, name, image_path, created_at FROM persons ORDER BY id"
+                    ).fetchall()
+                    backup_conn.close()
+
+                    # Extract all embeddings from backup FAISS index
+                    id_to_vec = vector_store.load_all_embeddings(
+                        os.path.join(tmp, "faces.index")
+                    )
+
+                    storage_src = os.path.join(tmp, "storage")
+                    batch: list[tuple[int, Any]] = []
+
+                    for person in backup_persons:
+                        old_id = person["id"]
+                        emb = id_to_vec.get(old_id)
+                        if emb is None:
+                            continue  # No embedding — skip
+
+                        # Copy image (generate new name if filename already exists)
+                        old_fname = os.path.basename(person["image_path"])
+                        src = os.path.join(storage_src, old_fname)
+                        if not os.path.exists(src):
+                            continue  # Image missing in backup — skip
+
+                        dst_fname = old_fname
+                        if os.path.exists(os.path.join(STORAGE_DIR, dst_fname)):
+                            ext = os.path.splitext(old_fname)[1]
+                            dst_fname = f"{uuid.uuid4().hex}{ext}"
+                        shutil.copy2(src, os.path.join(STORAGE_DIR, dst_fname))
+
+                        img_path = f"storage/{dst_fname}"
+                        new_id = database.add_person(name=person["name"], image_path=img_path)
+                        batch.append((new_id, emb))
+
+                    vector_store.add_embeddings_batch(batch)
+
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="File is not a valid ZIP archive.")
+
+    added = vector_store.get_total()
+    return {"status": mode, "total_indexed": added}
 
 
 # ============================================================

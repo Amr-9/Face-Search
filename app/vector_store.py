@@ -116,3 +116,43 @@ def get_total() -> int:
     if _index is None:
         return 0
     return int(_index.ntotal)
+
+
+def reload_index():
+    """Reload the FAISS index from disk. Called after a successful restore."""
+    global _index
+    with _lock:
+        if os.path.exists(INDEX_PATH):
+            _index = faiss.read_index(INDEX_PATH)
+        else:
+            _index = _build_empty_index()
+
+
+def load_all_embeddings(index_path: str) -> dict[int, np.ndarray]:
+    """
+    Read all (person_id → embedding) pairs from a FAISS index file on disk.
+    Used during merge-restore to extract vectors from the backup index.
+    """
+    idx = faiss.read_index(index_path)
+    if idx.ntotal == 0:
+        return {}
+    ids = faiss.vector_to_array(idx.id_map)                        # shape (n,) int64
+    flat = faiss.downcast_index(idx.index)                         # IndexFlatIP
+    vecs = faiss.vector_to_array(flat.xb).reshape(idx.ntotal, EMBEDDING_DIM)
+    return {int(ids[i]): vecs[i].copy() for i in range(idx.ntotal)}
+
+
+def add_embeddings_batch(items: list[tuple[int, np.ndarray]]):
+    """
+    Add multiple (person_id, embedding) pairs in a single lock+save.
+    More efficient than calling add_embedding() in a loop.
+    """
+    global _index
+    if not items:
+        return
+    vecs = np.array([item[1].astype(np.float32) for item in items], dtype=np.float32)
+    faiss.normalize_L2(vecs)
+    ids = np.array([item[0] for item in items], dtype=np.int64)
+    with _lock:
+        _index.add_with_ids(vecs, ids)
+        _save_index()
