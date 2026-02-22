@@ -34,7 +34,7 @@ if os.path.isdir(_nvidia_dir):
 
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, List
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -52,6 +52,15 @@ os.makedirs("models",  exist_ok=True)
 os.makedirs("storage", exist_ok=True)
 
 STORAGE_DIR = "storage"
+
+# Cosine similarity threshold for antelopev2 — below this is "no match".
+# Maps raw score [0.3 → 1.0] to confidence [0% → 100%].
+_FACE_THRESHOLD = 0.30
+
+
+def _to_confidence(cosine_sim: float) -> float:
+    """Convert raw cosine similarity to a user-friendly 0–1 confidence score."""
+    return round(max(0.0, (cosine_sim - _FACE_THRESHOLD) / (1.0 - _FACE_THRESHOLD)), 4)
 
 
 # ============================================================
@@ -117,57 +126,63 @@ def _save_image(image_bytes: bytes, filename: str) -> str:
 #  POST /faces/index — Index a new face
 # ============================================================
 
-@app.post("/faces/index", summary="Index a new face")
+@app.post("/faces/index", summary="Index one or more faces")
 async def index_face(
-    image: UploadFile = File(..., description="Image containing one or more faces"),
+    images: List[UploadFile] = File(..., description="One or more images containing faces"),
 ) -> dict[str, Any]:
     """
     Indexing steps:
-    1. Read the uploaded image.
+    1. Read each uploaded image.
     2. Extract all faces (512D) via InsightFace.
     3. For each face: save to SQLite and FAISS with a unique ID.
     """
-    image_bytes = await image.read()
-    if not image_bytes:
-        raise HTTPException(status_code=422, detail="The uploaded file is empty.")
+    if not images:
+        raise HTTPException(status_code=422, detail="No images provided.")
 
-    # Extract all faces
-    try:
-        results = face_engine.extract_all_faces(image_bytes)
-    except (ValueError, RuntimeError) as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    if not results:
-        raise HTTPException(
-            status_code=400,
-            detail="No clear face detected in the image."
-        )
-
-    ext = os.path.splitext(image.filename or "face.jpg")[1] or ".jpg"
     indexed = []
+    skipped = []
 
-    for face_result in results:
-        # Save cropped face with a unique UUID
-        unique_name = f"{uuid.uuid4().hex}{ext}"
-        crop_path   = _save_image(face_result["crop_bytes"], unique_name)
+    for image in images:
+        image_bytes = await image.read()
+        if not image_bytes:
+            skipped.append({"filename": image.filename, "reason": "Empty file"})
+            continue
 
-        # Add face to database
-        person_id = database.add_person(name="", image_path=crop_path)
+        ext = os.path.splitext(image.filename or "face.jpg")[1] or ".jpg"
 
-        # Add embedding to FAISS
-        vector_store.add_embedding(person_id=person_id, embedding=face_result["embedding"])
+        try:
+            results = face_engine.extract_all_faces(image_bytes)
+        except (ValueError, RuntimeError) as e:
+            skipped.append({"filename": image.filename, "reason": str(e)})
+            continue
 
-        indexed.append({
-            "person_id":  person_id,
-            "image_path": f"/storage/{unique_name}",
-            "det_score":  face_result["det_score"],
-        })
+        if not results:
+            skipped.append({"filename": image.filename, "reason": "No clear face detected"})
+            continue
+
+        for face_result in results:
+            unique_name = f"{uuid.uuid4().hex}{ext}"
+            crop_path   = _save_image(face_result["crop_bytes"], unique_name)
+            person_id   = database.add_person(name="", image_path=crop_path)
+            vector_store.add_embedding(person_id=person_id, embedding=face_result["embedding"])
+            indexed.append({
+                "person_id":  person_id,
+                "image_path": f"/storage/{unique_name}",
+                "det_score":  face_result["det_score"],
+                "source":     image.filename,
+            })
+
+    if not indexed and skipped:
+        reasons = "; ".join(s["reason"] for s in skipped)
+        raise HTTPException(status_code=400, detail=f"No faces indexed. {reasons}")
 
     return {
-        "status":        "indexed",
-        "faces_found":   len(indexed),
-        "indexed":       indexed,
-        "total_indexed": vector_store.get_total(),
+        "status":           "indexed",
+        "faces_found":      len(indexed),
+        "images_processed": len(images) - len(skipped),
+        "skipped":          skipped,
+        "indexed":          indexed,
+        "total_indexed":    vector_store.get_total(),
     }
 
 
@@ -219,7 +234,7 @@ async def search_face(
         results.append({
             "person_id":   pid,
             "name":        person["name"],
-            "similarity":  m["score"],         # 1.0 = exact match
+            "similarity":  _to_confidence(m["score"]),  # 1.0 = exact match
             "image_path":  f"/{person['image_path'].replace(os.sep, '/')}",
             "created_at":  person["created_at"],
         })

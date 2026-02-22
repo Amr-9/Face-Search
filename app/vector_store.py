@@ -52,10 +52,11 @@ def add_embedding(person_id: int, embedding: np.ndarray):
 
     Args:
         person_id: The person's ID in SQLite.
-        embedding: numpy array of shape (512,), L2-normalized.
+        embedding: numpy array of shape (512,), will be L2-normalized by FAISS.
     """
     global _index
     vec = embedding.astype(np.float32).reshape(1, EMBEDDING_DIM)
+    faiss.normalize_L2(vec)  # Exact L2 normalization — same image always scores 1.0
     ids = np.array([person_id], dtype=np.int64)
     with _lock:
         _index.add_with_ids(vec, ids)
@@ -80,6 +81,7 @@ def search(embedding: np.ndarray, top_k: int = 5) -> list[dict]:
 
     k = min(top_k, _index.ntotal)
     vec = embedding.astype(np.float32).reshape(1, EMBEDDING_DIM)
+    faiss.normalize_L2(vec)  # Exact L2 normalization — same image always scores 1.0
 
     scores, ids = _index.search(vec, k)
 

@@ -237,6 +237,45 @@
       object-fit: cover;
     }
 
+    /* Multi-image preview grid */
+    .preview-grid {
+      margin-top: 14px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .preview-grid .thumb {
+      position: relative;
+      width: 90px;
+      height: 90px;
+      border-radius: 10px;
+      border: 2px solid var(--border);
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    .preview-grid .thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .preview-grid .thumb .thumb-label {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: rgba(0,0,0,.55);
+      font-size: .65rem;
+      color: #fff;
+      text-align: center;
+      padding: 2px 3px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
     /* ── Form Controls ── */
     .field {
       margin-top: 18px;
@@ -650,13 +689,11 @@
         <!-- Drop zone -->
         <div class="drop-zone" id="dzIndex">
           <div class="drop-icon">🖼️</div>
-          <p>Drag an image here or click to select</p>
-          <p style="margin-top:5px;font-size:.8rem;">(JPEG, PNG — image must contain a clear face)</p>
-          <input type="file" id="fileIndex" accept="image/*" onchange="previewImage(this, 'previewIndex')" />
+          <p>Drag images here or click to select</p>
+          <p style="margin-top:5px;font-size:.8rem;">(JPEG, PNG — you can select multiple images at once)</p>
+          <input type="file" id="fileIndex" accept="image/*" multiple onchange="previewMultipleImages(this, 'previewIndexGrid')" />
         </div>
-        <div class="preview-wrap" id="previewIndexWrap">
-          <img id="previewIndex" src="" alt="Preview" />
-        </div>
+        <div id="previewIndexGrid" style="display:none;margin-top:14px;display:none;flex-wrap:wrap;gap:10px;"></div>
 
         <button class="btn btn-primary" id="btnIndex" onclick="indexFace()">
           <div class="spinner" id="spinIndex"></div>
@@ -740,7 +777,7 @@
       if (name === 'persons') loadPersons();
     }
 
-    /* ──────────────── Image Preview ──────────────── */
+    /* ──────────────── Image Preview (single) ──────────────── */
     function previewImage(input, previewId) {
       const file = input.files[0];
       if (!file) return;
@@ -754,25 +791,49 @@
       reader.readAsDataURL(file);
     }
 
+    /* ──────────────── Image Preview (multiple) ──────────────── */
+    function previewMultipleImages(input, gridId) {
+      const grid = document.getElementById(gridId);
+      grid.innerHTML = '';
+      const files = Array.from(input.files);
+      if (!files.length) { grid.style.display = 'none'; return; }
+      grid.style.display = 'flex';
+      grid.className = 'preview-grid';
+      files.forEach(file => {
+        const thumb = document.createElement('div');
+        thumb.className = 'thumb';
+        const img = document.createElement('img');
+        img.alt = file.name;
+        const label = document.createElement('div');
+        label.className = 'thumb-label';
+        label.textContent = file.name;
+        const reader = new FileReader();
+        reader.onload = e => { img.src = e.target.result; };
+        reader.readAsDataURL(file);
+        thumb.appendChild(img);
+        thumb.appendChild(label);
+        grid.appendChild(thumb);
+      });
+    }
+
     /* ── Drag & Drop ── */
-    function setupDrop(dzId, inputId, previewId) {
+    function setupDrop(dzId, inputId, previewFn) {
       const dz = document.getElementById(dzId);
       dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
       dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
       dz.addEventListener('drop', e => {
         e.preventDefault(); dz.classList.remove('dragover');
-        const file = e.dataTransfer.files[0];
-        if (file && file.type.startsWith('image/')) {
-          const inp = document.getElementById(inputId);
-          const dt = new DataTransfer();
-          dt.items.add(file);
-          inp.files = dt.files;
-          previewImage(inp, previewId);
-        }
+        const inp = document.getElementById(inputId);
+        const images = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+        if (!images.length) return;
+        const dt = new DataTransfer();
+        images.forEach(f => dt.items.add(f));
+        inp.files = dt.files;
+        previewFn(inp);
       });
     }
-    setupDrop('dzIndex', 'fileIndex', 'previewIndex');
-    setupDrop('dzSearch', 'fileSearch', 'previewSearch');
+    setupDrop('dzIndex', 'fileIndex', inp => previewMultipleImages(inp, 'previewIndexGrid'));
+    setupDrop('dzSearch', 'fileSearch', inp => previewImage(inp, 'previewSearch'));
 
     /* ──────────────── Stats ──────────────── */
     async function loadStats() {
@@ -789,16 +850,16 @@
 
     /* ──────────────── Index ──────────────── */
     async function indexFace() {
-      const file = document.getElementById('fileIndex').files[0];
+      const files = Array.from(document.getElementById('fileIndex').files);
       const out = document.getElementById('indexResult');
 
-      if (!file) return showAlert(out, 'error', 'Please select an image first.');
+      if (!files.length) return showAlert(out, 'error', 'Please select at least one image.');
 
       setLoading('btnIndex', 'spinIndex', true);
       out.innerHTML = '';
 
       const fd = new FormData();
-      fd.append('image', file);
+      files.forEach(f => fd.append('images', f));
 
       try {
         const res = await fetch(`${API}/faces/index`, { method: 'POST', body: fd });
@@ -809,12 +870,17 @@
             : (data.detail || 'Unknown error');
           throw new Error(detail);
         }
-        showAlert(out, 'success',
-          `✅ Successfully indexed <strong>${data.faces_found}</strong> face(s)!<br>
-         Total indexed: <strong>${data.total_indexed}</strong>`
-        );
+        let msg = `✅ Indexed <strong>${data.faces_found}</strong> face(s) from <strong>${data.images_processed}</strong> image(s).`;
+        if (data.skipped && data.skipped.length) {
+          msg += `<br>⚠️ Skipped <strong>${data.skipped.length}</strong>: ` +
+            data.skipped.map(s => `${s.filename} (${s.reason})`).join(', ');
+        }
+        msg += `<br>Total indexed: <strong>${data.total_indexed}</strong>`;
+        showAlert(out, 'success', msg);
         document.getElementById('fileIndex').value = '';
-        document.getElementById('previewIndexWrap').classList.remove('show');
+        const grid = document.getElementById('previewIndexGrid');
+        grid.innerHTML = '';
+        grid.style.display = 'none';
         loadStats();
       } catch (e) {
         showAlert(out, 'error', '❌ ' + e.message);
